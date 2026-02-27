@@ -1,40 +1,30 @@
-const { initializeApp, cert, getApps } = require('firebase-admin/app');
-const { getFirestore } = require('firebase-admin/firestore');
+const { getStore } = require('@netlify/blobs');
 
-let db;
-const getDB = () => {
-  if (!getApps().length) {
-    initializeApp({
-      credential: cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      })
-    });
-  }
-  db = getFirestore();
-  return db;
-};
-
-exports.handler = async (event) => {
-  const db = getDB();
-  const docRef = db.collection('app').doc('data');
-
+exports.handler = async (event, context) => {
+  const store = getStore('bayan-data');
+  
   if (event.httpMethod === 'GET') {
-    const doc = await docRef.get();
-    if (!doc.exists) {
-      return { statusCode: 404, body: JSON.stringify({ error: 'No data' }) };
-    }
+    const payload = await store.get('payload', { type: 'json' });
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(doc.data().payload)
+      body: JSON.stringify(payload || {})
     };
   }
 
   if (event.httpMethod === 'POST') {
-    const payload = JSON.parse(event.body);
-    await docRef.set({ payload });
-    return { statusCode: 200, body: JSON.stringify({ success: true }) };
+    try {
+      const body = JSON.parse(event.body);
+      await store.setJSON('payload', body.payload);
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ success: true })
+      };
+    } catch (error) {
+      return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
+    }
   }
+
+  return { statusCode: 405, body: 'Method Not Allowed' };
 };

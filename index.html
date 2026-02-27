@@ -556,6 +556,31 @@
 <body>
     <div id="root"></div>
     
+    <!-- Firebase SDK -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
+      import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyDj_IN-FJ0JVGkYQ0JSpMyeV6Atnw6NZD0",
+        authDomain: "m-ibn-ms3ood.firebaseapp.com",
+        projectId: "m-ibn-ms3ood",
+        storageBucket: "m-ibn-ms3ood.firebasestorage.app",
+        messagingSenderId: "14887999121",
+        appId: "1:14887999121:web:ee3f0e8bce159aad5a9130"
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app);
+
+      window._firebaseDB = db;
+      window._firebaseDoc = doc(db, 'app', 'data');
+      window._firebaseGetDoc = getDoc;
+      window._firebaseSetDoc = setDoc;
+      window._firebaseOnSnapshot = onSnapshot;
+      window._firebaseReady = true;
+    </script>
+
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -5553,15 +5578,24 @@
             useEffect(() => {
                 const loadData = async () => {
                     try {
-                        const response = await fetch('/.netlify/functions/data');
-                        if (!response.ok) {
-                             throw new Error('Failed to fetch');
+                        const waitForFirebase = () => new Promise(resolve => {
+                            const check = setInterval(() => {
+                                if (window._firebaseReady) { clearInterval(check); resolve(); }
+                            }, 100);
+                        });
+                        await waitForFirebase();
+
+                        const docSnap = await window._firebaseGetDoc(window._firebaseDoc);
+                        if (docSnap.exists()) {
+                            const serverData = docSnap.data().payload;
+                            const normalized = normalizeData(serverData);
+                            setData(normalized);
+                            lastSavedDataRef.current = JSON.stringify(normalized);
+                        } else {
+                            const initial = generateInitialData();
+                            setData(initial);
+                            lastSavedDataRef.current = JSON.stringify(initial);
                         }
-                        const serverData = await response.json();
-                        const normalized = normalizeData(serverData);
-                        
-                        setData(normalized);
-                        lastSavedDataRef.current = JSON.stringify(normalized);
                     } catch (error) {
                         console.error('Error loading data:', error);
                         const initial = generateInitialData();
@@ -5576,33 +5610,29 @@
             
             const debouncedData = useDebounce(data, 2000);
 
-            // Polling for updates
+            // Real-time listener from Firebase
             useEffect(() => {
-                const pollInterval = setInterval(async () => {
-                    if (data !== debouncedData) {
+                const setupListener = () => {
+                    if (!window._firebaseReady) {
+                        setTimeout(setupListener, 200);
                         return;
                     }
-
-                    try {
-                        const response = await fetch('/.netlify/functions/data');
-                        if (response.ok) {
-                            const serverData = await response.json();
+                    const unsubscribe = window._firebaseOnSnapshot(window._firebaseDoc, (docSnap) => {
+                        if (docSnap.exists()) {
+                            const serverData = docSnap.data().payload;
                             const normalized = normalizeData(serverData);
                             const serverJson = JSON.stringify(normalized);
-                            
                             if (serverJson !== lastSavedDataRef.current) {
-                                console.log('New data received from server');
                                 setData(normalized);
                                 lastSavedDataRef.current = serverJson;
                             }
                         }
-                    } catch (error) {
-                        console.error('Polling error:', error);
-                    }
-                }, 3000);
-
-                return () => clearInterval(pollInterval);
-            }, [data, debouncedData]);
+                    });
+                    return unsubscribe;
+                };
+                const unsubscribe = setupListener();
+                return () => { if (unsubscribe) unsubscribe(); };
+            }, []);
 
             // Save Data
             useEffect(() => {
@@ -5616,11 +5646,7 @@
                     const saveData = async () => {
                         setIsSaving(true);
                         try {
-                            await fetch('/.netlify/functions/data', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: dataToSave
-                            });
+                            await window._firebaseSetDoc(window._firebaseDoc, { payload: JSON.parse(dataToSave) });
                             lastSavedDataRef.current = dataToSave;
                         } catch (error) {
                             console.error('Error saving data:', error);
